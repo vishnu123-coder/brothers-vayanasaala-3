@@ -1,22 +1,27 @@
 {
-  "cli": {
-    "version": ">= 5.9.0"
-  },
-  "build": {
-    "preview": {
-      "android": {
-        "buildType": "apk",
-        "image": "latest"
-      },
-      "distribution": "internal"
+  "expo": {
+    "name": "Brothers Vayanasala",
+    "slug": "brothers-vayanasala",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
     },
-    "production": {
-      "android": {
-        "buildType": "app-bundle"
+    "android": {
+      "package": "com.brothersvayanasala.library",
+      "versionCode": 1,
+      "statusBar": {
+        "backgroundColor": "#ffffff",
+        "barStyle": "dark-content",
+        "translucent": false
       }
-    }
-  },
-  "submit": {
-    "production": {}
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ]
   }
 }
