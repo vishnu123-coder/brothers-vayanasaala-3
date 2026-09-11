@@ -2,6 +2,7 @@
   "expo": {
     "name": "Brothers Vayanasala",
     "slug": "brothers-vayanasala",
+    "owner": "vishnucoders-team",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -34,6 +35,11 @@
           "cameraPermission": "Allow Brothers Vayanasala to access your camera to scan book and member barcodes."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a0e41254-f128-4673-b31b-09be2caa00e7"
+      }
+    }
   }
 }
