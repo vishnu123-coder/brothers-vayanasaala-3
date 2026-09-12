@@ -1,4 +1,4 @@
-// database/db.js
+
 
 import * as SQLite from 'expo-sqlite/legacy';
 import {
