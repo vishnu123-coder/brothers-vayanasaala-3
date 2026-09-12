@@ -1,4 +1,4 @@
-[9/12/2026 9:24 AM] Vp: // database/db.js
+ // database/db.js
 // Brothers Vayanasala Library Database
 //
 // Local database: SQLite
@@ -316,7 +316,7 @@ export async function bulkAddBooks(rows) {
 // ============================================================
 // EXPLICIT BOOK INSERT / UPDATE
 // ============================================================
-[9/12/2026 9:24 AM] Vp: export async function addBookExplicit({
+export async function addBookExplicit({
   bookId,
   categoryCode,
   categoryNo,
@@ -518,7 +518,7 @@ export async function getCategoryLabels() {
   );
 
   const rows = [];
-[9/12/2026 9:24 AM] Vp: for (let i = 0; i < result.rows.length; i++) {
+for (let i = 0; i < result.rows.length; i++) {
     const value = result.rows.item(i).category_label;
 
     if (value) {
@@ -720,7 +720,7 @@ export async function bulkImportMembers(rows) {
       if (!row.memberId) {
         throw new Error('Missing Member ID');
       }
-[9/12/2026 9:24 AM] Vp: await upsertMember(
+ await upsertMember(
         row.memberId,
         row.name || '',
         row.phone || '',
@@ -916,7 +916,7 @@ export async function returnBook({
     book: updatedBook,
   };
 }
-[9/12/2026 9:24 AM] Vp: export async function getActiveIssues() {
+ export async function getActiveIssues() {
   const result = await runSql(
     SELECT
       issues.*,
@@ -1119,7 +1119,7 @@ export async function syncCloudToLocal() {
           category_type,
           book_name,
           author_name,
-[9/12/2026 9:27 AM] Vp: publication_name,
+publication_name,
           cost,
           barcode,
           status,
@@ -1304,7 +1304,7 @@ export async function syncLocalToCloud() {
         'members',
         String(member.member_id)
       );
-[9/12/2026 9:27 AM] Vp: batch.set(
+batch.set(
         ref,
         {
           member_id: String(member.member_id),
