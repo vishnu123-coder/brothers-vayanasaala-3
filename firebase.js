@@ -1,7 +1,11 @@
 import { initializeApp } from "firebase/app";
+import {
+  initializeAuth,
+  getReactNativePersistence
+} from "firebase/auth";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getFirestore } from "firebase/firestore";
 
-// Brothers Vayanasala Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyCHYNTYw95bSbnCng6L8pAAQxyDCH6uYXMeI",
   authDomain: "brothers-vayanasala-2.firebaseapp.com",
@@ -11,10 +15,12 @@ const firebaseConfig = {
   appId: "1:95634722926:web:2143abfb706779914d67f"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Cloud Firestore database
+const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(AsyncStorage)
+});
+
 const db = getFirestore(app);
 
-export { app, db };
+export { app, auth, db };
