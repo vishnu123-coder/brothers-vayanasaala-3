@@ -1,4 +1,4 @@
-[9/12/2026 9:38 AM] Vp: import React, { useEffect, useState } from 'react';
+ import React, { useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -143,7 +143,7 @@ export default function App() {
       </SafeAreaProvider>
     );
   }
-[9/12/2026 9:38 AM] Vp: return (
+ return (
     <SafeAreaProvider>
       <NavigationContainer>
         <StatusBar
