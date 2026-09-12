@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "Brothers Vayanasala",
+    "slug": "brothers-vayanasala",
+    "owner": "vishnucoders-team",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#050505"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#050505"
+      },
+      "package": "com.brothersvayanasala.app",
+      "permissions": [
+        "CAMERA"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Brothers Vayanasala to access your camera to scan book and member barcodes."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a0e41254-f128-4673-b31b-09be2caa00e7"
+      }
+    }
+  }
+}
