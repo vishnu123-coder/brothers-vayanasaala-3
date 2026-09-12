@@ -83,7 +83,9 @@ export function initDatabase() {
   return new Promise((resolve, reject) => {
     db.transaction(
       (tx) => {
-        tx.executeSql(
+       tx.executeSql(
+  CREATE TABLE IF NOT EXISTS books (
+    tx.executeSql(`
           CREATE TABLE IF NOT EXISTS books (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             book_id INTEGER UNIQUE,
@@ -99,7 +101,7 @@ export function initDatabase() {
             status TEXT DEFAULT 'available',
             created_at TEXT DEFAULT (datetime('now'))
           );
-        );
+        `);
 
         tx.executeSql(
           CREATE TABLE IF NOT EXISTS members (
