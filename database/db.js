@@ -1,31 +1,16 @@
- // database/db.js
-// Brothers Vayanasala Library Database
-//
-// Local database: SQLite
-// Online database: Firebase Firestore
-//
-// SQLite remains the local/offline database.
-// Firestore is used to synchronize books, members and issues
-// between multiple devices.
+// database/db.js
 
 import * as SQLite from 'expo-sqlite/legacy';
-
 import {
   collection,
   doc,
   getDocs,
   setDoc,
-  deleteDoc,
   writeBatch,
 } from 'firebase/firestore';
-
-import { db as firestoreDb } from '../firebase';
+import { auth, db as firestoreDb } from '../firebase';
 
 const db = SQLite.openDatabase('libratrack.db');
-
-// ============================================================
-// CONSTANTS
-// ============================================================
 
 export const CATEGORIES = [
   { code: 'N', label: 'Novel' },
@@ -35,8 +20,6 @@ export const CATEGORIES = [
   { code: 'OT', label: 'Others' },
   { code: 'CL', label: "Children's literature" },
   { code: 'B', label: 'Biography/Autobiography' },
-  { code: 'E', label: 'Essay / Memoir' },
-  { code: 'SD', label: 'Story-Drama' },
 ];
 
 export const LANGUAGES = [
@@ -48,10 +31,6 @@ export const LANGUAGES = [
   'Telugu',
   'Other',
 ];
-
-// ============================================================
-// SQLITE HELPER
-// ============================================================
 
 function runSql(sql, params = []) {
   return new Promise((resolve, reject) => {
@@ -69,26 +48,36 @@ function runSql(sql, params = []) {
   });
 }
 
-// ============================================================
-// FIREBASE HELPERS
-// ============================================================
+function rowsToArray(result) {
+  const rows = [];
 
-// Firebase errors should NOT stop the local library from working.
-// Local SQLite remains the primary offline database.
+  for (let i = 0; i < result.rows.length; i++) {
+    rows.push(result.rows.item(i));
+  }
+
+  return rows;
+}
+
+function clean(value) {
+  return String(value ?? '').trim();
+}
 
 async function safeCloudOperation(operation) {
   try {
-    await operation();
-    return true;
+    if (!auth.currentUser) {
+      return null;
+    }
+
+    return await operation();
   } catch (error) {
-    console.log('Firebase sync skipped:', error?.message || error);
-    return false;
+    console.log(
+      'Cloud operation warning:',
+      error?.message || error
+    );
+
+    return null;
   }
 }
-
-// ============================================================
-// INITIALIZE LOCAL DATABASE
-// ============================================================
 
 export function initDatabase() {
   return new Promise((resolve, reject) => {
@@ -149,20 +138,61 @@ export function initDatabase() {
           CREATE INDEX IF NOT EXISTS idx_books_barcode
           ON books(barcode);
         );
-[9/12/2026 9:24 AM] Vp: // Existing installations may not have category_label.
+
         tx.executeSql(
-          ALTER TABLE books ADD COLUMN category_label TEXT;,
-          [],
-          () => {},
-          () => false
+          CREATE INDEX IF NOT EXISTS idx_members_name
+          ON members(name);
         );
 
-        // Existing installations may not have member address.
         tx.executeSql(
-          ALTER TABLE members ADD COLUMN address TEXT;,
+          PRAGMA table_info(books);,
           [],
-          () => {},
-          () => false
+          (_, result) => {
+            let exists = false;
+
+            for (let i = 0; i < result.rows.length; i++) {
+              if (
+                result.rows.item(i).name ===
+                'category_label'
+              ) {
+                exists = true;
+                break;
+              }
+            }
+
+            if (!exists) {
+              tx.executeSql(
+                ALTER TABLE books ADD COLUMN category_label TEXT;
+              );
+            }
+
+            return false;
+          }
+        );
+
+        tx.executeSql(
+          PRAGMA table_info(members);,
+          [],
+          (_, result) => {
+            let exists = false;
+           for (let i = 0; i < result.rows.length; i++) {
+              if (
+                result.rows.item(i).name ===
+                'address'
+              ) {
+                exists = true;
+                break;
+              }
+            }
+
+            if (!exists) {
+              tx.executeSql(
+                ALTER TABLE members ADD COLUMN address TEXT;
+              );
+            }
+
+            return false;
+          }
         );
       },
       (error) => reject(error),
@@ -171,71 +201,61 @@ export function initDatabase() {
   });
 }
 
-// ============================================================
-// BOOK NUMBER HELPERS
-// ============================================================
-
 export async function getNextBookId() {
   const result = await runSql(
     SELECT MAX(book_id) AS maxId FROM books;
   );
 
-  const maxId = result.rows.item(0).maxId;
-
-  return (maxId || 0) + 1;
+  return (result.rows.item(0).maxId || 0) + 1;
 }
 
 export async function getNextCategoryNo(categoryCode) {
   const result = await runSql(
-    SELECT MAX(category_no) AS maxNo
-     FROM books
-     WHERE category_code = ?;,
+    
+      SELECT MAX(category_no) AS maxNo
+      FROM books
+      WHERE category_code = ?;
+    ,
     [categoryCode]
   );
 
-  const maxNo = result.rows.item(0).maxNo;
-
-  return (maxNo || 0) + 1;
+  return (result.rows.item(0).maxNo || 0) + 1;
 }
 
-// ============================================================
-// CLOUD BOOK SYNC
-// ============================================================
-
-async function uploadBookToCloud(book) {
-  if (!book?.book_id) return;
-
-  await safeCloudOperation(async () => {
-    await setDoc(
-      doc(firestoreDb, 'books', String(book.book_id)),
-      {
-        book_id: book.book_id,
-        category_code: book.category_code || '',
-        category_no: book.category_no || 0,
-        category_label: book.category_label || '',
-        category_type: book.category_type || '',
-        book_name: book.book_name || '',
-        author_name: book.author_name || '',
-        publication_name: book.publication_name || '',
-        cost: book.cost ?? null,
-        barcode: book.barcode || '',
-        status: book.status || 'available',
-        created_at: book.created_at || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-  });
+function bookCloudData(book) {
+  return {
+    id: book.id ?? null,
+    book_id: book.book_id,
+    category_code: book.category_code ?? 'OT',
+    category_no: book.category_no ?? 0,
+    category_label: book.category_label ?? null,
+    category_type: book.category_type ?? null,
+    book_name: book.book_name ?? '',
+    author_name: book.author_name ?? null,
+    publication_name: book.publication_name ?? null,
+    cost: book.cost ?? null,
+    barcode: book.barcode ?? null,
+    status: book.status ?? 'available',
+    created_at: book.created_at ?? null,
+  };
 }
 
-// ============================================================
-// BOOKS
-// ============================================================
+async function uploadBook(book) {
+  return safeCloudOperation(() =>
+    setDoc(
+      doc(
+        firestoreDb,
+        'books',
+        String(book.book_id)
+      ),
+      bookCloudData(book)
+    )
+  );
+}
 
 export async function addBook({
   categoryCode,
-  categoryNo,
-  categoryLabel,
+  categoryLabel = '',
   categoryType,
   bookName,
   authorName,
@@ -245,31 +265,36 @@ export async function addBook({
 }) {
   const bookId = await getNextBookId();
 
-  const finalCategoryNo =
-    categoryNo || (await getNextCategoryNo(categoryCode));
+  const categoryNo = await getNextCategoryNo(
+    categoryCode || 'OT'
+  );
+
+  const cleanLabel = clean(categoryLabel).toUpperCase();
 
   await runSql(
-    INSERT INTO books
-    (
-      book_id,
-      category_code,
-      category_no,
-      category_label,
-      category_type,
-      book_name,
-      author_name,
-      publication_name,
-      cost,
-      barcode
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);,
+    
+      INSERT INTO books
+      (
+        book_id,
+        category_code,
+        category_no,
+        category_label,
+        category_type,
+        book_name,
+        author_name,
+        publication_name,
+        cost,
+        barcode
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    ,
     [
       bookId,
-      categoryCode || '',
-      finalCategoryNo,
-      categoryLabel || '',
-      categoryType || '',
-      bookName || '',
+      categoryCode || 'OT',
+      categoryNo,
+      cleanLabel || null,
+      categoryType || null,
+      bookName,
       authorName || null,
       publicationName || null,
       cost ?? null,
@@ -277,189 +302,225 @@ export async function addBook({
     ]
   );
 
-  const book = await findBookByBarcodeOrId(bookId);
+  const result = await runSql(
+    SELECT * FROM books WHERE book_id = ?;,
+    [bookId]
+  );
 
-  await uploadBookToCloud(book);
+  const book = result.rows.item(0);
+
+  await uploadBook(book);
 
   return {
     bookId,
-    categoryNo: finalCategoryNo,
+    categoryNo,
+    categoryLabel:
+      cleanLabel ||
+      ${categoryCode || 'OT'}-${categoryNo},
   };
 }
-
-// ============================================================
-// BULK BOOK IMPORT
-// ============================================================
 
 export async function bulkAddBooks(rows) {
   let inserted = 0;
+  let updated = 0;
+
   const failed = [];
 
   for (const row of rows) {
     try {
-      await addBook(row);
-      inserted++;
-    } catch (error) {
-      failed.push({
-        row,
-        error: error?.message || String(error),
-      });
-    }
-  }
+      const suppliedBookId = Number(row.bookId);
 
-  return {
-    inserted,
-    failed,
-  };
-}
+      if (
+        Number.isInteger(suppliedBookId) &&
+        suppliedBookId > 0
+      ) {
+        const existing = await runSql(
+          
+            SELECT id
+            FROM books
+            WHERE book_id = ?
+            LIMIT 1;
+          ,
+          [suppliedBookId]
+        );
 
-// ============================================================
-// EXPLICIT BOOK INSERT / UPDATE
-// ============================================================
-export async function addBookExplicit({
-  bookId,
-  categoryCode,
-  categoryNo,
-  categoryLabel,
-  categoryType,
-  bookName,
-  authorName,
-  publicationName,
-  cost,
-  barcode,
-  status,
-}) {
-  const existing = await findBookByBarcodeOrId(bookId);
+        if (existing.rows.length > 0) {
+          const cleanLabel = clean(
+            row.categoryLabel
+          ).toUpperCase();
 
-  await runSql(
-    INSERT OR REPLACE INTO books
-    (
-      book_id,
-      category_code,
-      category_no,
-      category_label,
-      category_type,
-      book_name,
-      author_name,
-      publication_name,
-      cost,
-      barcode,
-      status
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);,
-    [
-      bookId,
-      categoryCode || '',
-      categoryNo || 0,
-      categoryLabel || '',
-      categoryType || '',
-      bookName || '',
-      authorName || null,
-      publicationName || null,
-      cost ?? null,
-      barcode || null,
-      status  existing?.status  'available',
-    ]
-  );
+          await runSql(
+            `
+              UPDATE books SET
+                category_code = ?,
+                category_label = ?,
+                category_no =
+                  COALESCE(?, category_no),
+                category_type = ?,
+                book_name = ?,
+                author_name = ?,
+                publication_name = ?,
+                cost = ?,
+                barcode = ?
+              WHERE book_id = ?;
+            ,
+            [
+              row.categoryCode || 'OT',
+              cleanLabel || null,
+              row.categoryNo
+                ? Number(row.categoryNo)
+                : null,
+              row.categoryType || null,
+              row.bookName,
+              row.authorName || null,
+              row.publicationName || null,
+              row.cost ?? null,
+              row.barcode || null,
+              suppliedBookId,
+            ]
+          );
 
-  const book = await findBookByBarcodeOrId(bookId);
+          const updatedResult = await runSql(
+            
+              SELECT *
+              FROM books
+              WHERE book_id = ?;
+            ,
+            [suppliedBookId]
+          );
 
-  await uploadBookToCloud(book);
-}
+          await uploadBook(
+            updatedResult.rows.item(0)
+          );
 
-// ============================================================
-// SMART LIBRARY IMPORT
-// ============================================================
-
-export async function bulkImportLibraryBooks(rows) {
-  let inserted = 0;
-  const failed = [];
-
-  for (const row of rows) {
-    try {
-      if (row.bookId && row.categoryNo) {
-        await addBookExplicit(row);
-      } else {
-        await addBook(row);
+          updated += 1;
+          continue;
+        }
       }
 
-      inserted++;
-    } catch (error) {
+      await addBook(row);
+
+      inserted += 1;
+    } catch (e) {
       failed.push({
         row,
-        error: error?.message || String(error),
+        error: e?.message || String(e),
       });
     }
   }
 
   return {
     inserted,
+    updated,
     failed,
   };
 }
 
-// ============================================================
-// GET BOOKS
-// ============================================================
+export const bulkImportLibraryBooks =
+  bulkAddBooks;
 
 export async function getAllBooks() {
   const result = await runSql(
-    SELECT * FROM books ORDER BY book_id DESC;
+    
+      SELECT *
+      FROM books
+      ORDER BY book_id DESC;
+    
   );
 
-  const rows = [];
-
-  for (let i = 0; i < result.rows.length; i++) {
-    rows.push(result.rows.item(i));
-  }
-
-  return rows;
+  return rowsToArray(result);
 }
 
-// ============================================================
-// SEARCH BOOKS
-// ============================================================
+export async function getCategoryLabels() {
+  const result = await runSql(
+    SELECT DISTINCT
+      TRIM(
+        COALESCE(
+          category_label,
+          category_code  '-'  category_no
+        )
+      ) AS category
+    FROM books
+    WHERE TRIM(
+      COALESCE(
+        category_label,
+        category_code  '-'  category_no
+      )
+    ) <> ''
+    ORDER BY category COLLATE NOCASE ASC;
+  );
+
+  return rowsToArray(result).map(
+    (row) => row.category
+  );
+}
 
 export async function searchBooks({
-  query,
-  categoryCode,
-  categoryLabel,
-  status,
+  query = '',
+  categoryCode = '',
+  categoryLabel = '',
+  categoryType = '',
+  status = '',
 }) {
-  let sql = SELECT * FROM books WHERE 1=1;
+  let sql = 
+    SELECT *
+    FROM books
+    WHERE 1=1
+  ;
+
   const params = [];
 
   if (categoryCode) {
-    sql +=  AND category_code = ?;
+    sql += 
+      AND category_code = ?
+    ;
+
     params.push(categoryCode);
   }
 
   if (categoryLabel) {
-    sql +=  AND category_label = ?;
+    sql += 
+      AND UPPER(
+        COALESCE(
+          category_label,
+          category_code  '-'  category_no
+        )
+      ) = UPPER(?)
+    ;
+
     params.push(categoryLabel);
   }
 
+  if (categoryType) {
+    sql += 
+      AND category_type = ?
+    ;
+
+    params.push(categoryType);
+  }
+
   if (status) {
-    sql +=  AND status = ?;
+    sql += 
+      AND status = ?
+    ;
+
     params.push(status);
   }
 
-  if (query) {
+  if (clean(query)) {
+    const like = %${clean(query)}%;
+
     sql += 
       AND (
-        book_name LIKE ?
-        OR author_name LIKE ?
-        OR publication_name LIKE ?
-        OR barcode LIKE ?
-        OR CAST(book_id AS TEXT) LIKE ?
-        OR category_label LIKE ?
+        LOWER(book_name) LIKE LOWER(?) OR
+        LOWER(author_name) LIKE LOWER(?) OR
+        LOWER(publication_name) LIKE LOWER(?) OR
+        LOWER(barcode) LIKE LOWER(?) OR
+        CAST(book_id AS TEXT) LIKE ?
       )
     ;
 
-    const like = %${query}%;
-
     params.push(
-      like,
       like,
       like,
       like,
@@ -468,35 +529,35 @@ export async function searchBooks({
     );
   }
 
-  sql +=  ORDER BY book_id DESC;;
-
-  const result = await runSql(sql, params);
-
-  const rows = [];
-
-  for (let i = 0; i < result.rows.length; i++) {
-    rows.push(result.rows.item(i));
-  }
-
-  return rows;
-}
-
-// ============================================================
-// FIND BOOK
-// ============================================================
-
-export async function findBookByBarcodeOrId(value) {
-  const numericValue = isNaN(Number(value))
-    ? -1
-    : Number(value);
+  sql += 
+    ORDER BY book_id DESC;
+  ;
 
   const result = await runSql(
-    SELECT *
-     FROM books
-     WHERE barcode = ?
-     OR book_id = ?
-     LIMIT 1;,
-    [String(value), numericValue]
+    sql,
+    params
+  );
+
+  return rowsToArray(result);
+}
+
+export async function findBookByBarcodeOrId(
+  value
+) {
+  const result = await runSql(
+    
+      SELECT *
+      FROM books
+      WHERE barcode = ?
+         OR book_id = ?
+      LIMIT 1;
+    ,
+    [
+      value,
+      Number.isNaN(Number(value))
+        ? -1
+        : Number(value),
+    ]
   );
 
   return result.rows.length > 0
@@ -504,121 +565,67 @@ export async function findBookByBarcodeOrId(value) {
     : null;
 }
 
-// ============================================================
-// CATEGORY LIST
-// ============================================================
-
-export async function getCategoryLabels() {
-  const result = await runSql(
-    SELECT DISTINCT category_label
-    FROM books
-    WHERE category_label IS NOT NULL
-      AND category_label != ''
-    ORDER BY category_label ASC;
-  );
-
-  const rows = [];
-for (let i = 0; i < result.rows.length; i++) {
-    const value = result.rows.item(i).category_label;
-
-    if (value) {
-      rows.push(value);
-    }
-  }
-
-  return rows;
-}
-
-// ============================================================
-// STOCK STATISTICS
-// ============================================================
-
 export async function getStockStats() {
   const total = await runSql(
     SELECT COUNT(*) AS c FROM books;
   );
 
   const issued = await runSql(
-    SELECT COUNT(*) AS c
-     FROM books
-     WHERE status = 'issued';
+    
+      SELECT COUNT(*) AS c
+      FROM books
+      WHERE status = 'issued';
+    
   );
 
   const available = await runSql(
-    SELECT COUNT(*) AS c
-     FROM books
-     WHERE status = 'available';
+    
+      SELECT COUNT(*) AS c
+      FROM books
+      WHERE status = 'available';
+    
   );
 
   const byCategory = await runSql(
-    SELECT
-      category_code,
-      category_label,
-      COUNT(*) AS c
-    FROM books
-    GROUP BY category_code, category_label;
+    
+      SELECT category_code, COUNT(*) AS c
+      FROM books
+      GROUP BY category_code;
+    `
   );
-
-  const categoryRows = [];
-
-  for (let i = 0; i < byCategory.rows.length; i++) {
-    categoryRows.push(byCategory.rows.item(i));
-  }
-
-  return {
+         return {
     total: total.rows.item(0).c,
     issued: issued.rows.item(0).c,
-    available: available.rows.item(0).c,
-    byCategory: categoryRows,
+    available:
+      available.rows.item(0).c,
+    byCategory: rowsToArray(
+      byCategory
+    ),
   };
 }
 
-// ============================================================
-// MEMBERS
-// ============================================================
-
-async function uploadMemberToCloud(member) {
-  if (!member?.member_id) return;
-
-  await safeCloudOperation(async () => {
-    // Member ID is the Firestore document ID.
-    // This automatically prevents duplicate member IDs.
-    await setDoc(
-      doc(firestoreDb, 'members', String(member.member_id)),
-      {
-        member_id: String(member.member_id),
-        name: member.name || '',
-        phone: member.phone || '',
-        address: member.address || '',
-        created_at: member.created_at || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-  });
+function memberCloudData(member) {
+  return {
+    id: member.id ?? null,
+    member_id: member.member_id,
+    name: member.name ?? '',
+    phone: member.phone ?? '',
+    address: member.address ?? '',
+    created_at: member.created_at ?? null,
+  };
 }
 
-export async function addMember({
-  memberId,
-  name,
-  phone,
-  address,
-}) {
-  await runSql(
-    INSERT INTO members
-    (member_id, name, phone, address)
-    VALUES (?, ?, ?, ?);,
-    [
-      memberId,
-      name || null,
-      phone || null,
-      address || null,
-    ]
+async function uploadMember(member) {
+  return safeCloudOperation(() =>
+    setDoc(
+      doc(
+        firestoreDb,
+        'members',
+        String(member.member_id)
+      ),
+      memberCloudData(member)
+    )
   );
-
-  const member = await getMember(memberId);
-
-  await uploadMemberToCloud(member);
 }
 
 export async function upsertMember(
@@ -627,34 +634,138 @@ export async function upsertMember(
   phone = '',
   address = ''
 ) {
+  const cleanId = clean(memberId);
+
+  if (!cleanId) {
+    throw new Error(
+      'Member ID is required'
+    );
+  }
+
+  if (!clean(name)) {
+    throw new Error(
+      'Member name is required'
+    );
+  }
+
   await runSql(
-    INSERT INTO members
-    (member_id, name, phone, address)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(member_id)
-    DO UPDATE SET
-      name = excluded.name,
-      phone = excluded.phone,
-      address = excluded.address;,
+    
+      INSERT INTO members
+        (
+          member_id,
+          name,
+          phone,
+          address
+        )
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(member_id)
+      DO UPDATE SET
+        name = excluded.name,
+        phone = excluded.phone,
+        address = excluded.address;
+    ,
     [
-      memberId,
-      name,
-      phone,
-      address,
+      cleanId,
+      clean(name),
+      clean(phone),
+      clean(address),
     ]
   );
 
-  const member = await getMember(memberId);
+  const result = await runSql(
+    
+      SELECT *
+      FROM members
+      WHERE member_id = ?;
+    ,
+    [cleanId]
+  );
 
-  await uploadMemberToCloud(member);
+  await uploadMember(
+    result.rows.item(0)
+  );
 }
 
-export async function getMember(memberId) {
+export async function addMember({
+  memberId,
+  name,
+  phone,
+  address,
+}) {
+  const cleanId = clean(memberId);
+
+  if (!cleanId) {
+    throw new Error(
+      'Member ID is required'
+    );
+  }
+
+  if (!clean(name)) {
+    throw new Error(
+      'Member name is required'
+    );
+  }
+
+  if (!clean(phone)) {
+    throw new Error(
+      'Phone number is required'
+    );
+  }
+
+  if (!clean(address)) {
+    throw new Error(
+      'Address is required'
+    );
+  }
+
+  const existing = await getMember(
+    cleanId
+  );
+
+  if (existing) {
+    throw new Error(
+      'This Member ID is already registered'
+    );
+  }
+
+  await runSql(
+    
+      INSERT INTO members
+        (
+          member_id,
+          name,
+          phone,
+          address
+        )
+      VALUES (?, ?, ?, ?);
+    ,
+    [
+      cleanId,
+      clean(name),
+      clean(phone),
+      clean(address),
+    ]
+  );
+
+  const member = await getMember(
+    cleanId
+  );
+
+  await uploadMember(member);
+
+  return member;
+}
+
+export async function getMember(
+  memberId
+) {
   const result = await runSql(
-    SELECT *
-     FROM members
-     WHERE member_id = ?;,
-    [memberId]
+    
+      SELECT *
+      FROM members
+      WHERE member_id = ?;
+    ,
+    [clean(memberId)]
   );
 
   return result.rows.length > 0
@@ -662,148 +773,110 @@ export async function getMember(memberId) {
     : null;
 }
 
-export async function searchMembers(query) {
-  let sql = SELECT * FROM members;
-  const params = [];
-
-  if (query) {
-    sql += 
-      WHERE member_id LIKE ?
-      OR name LIKE ?
-      OR phone LIKE ?
-      OR address LIKE ?
-    ;
-
-    const like = %${query}%;
-
-    params.push(
-      like,
-      like,
-      like,
-      like
-    );
-  }
-
-  sql +=  ORDER BY id DESC;;
-
-  const result = await runSql(sql, params);
-
-  const rows = [];
-
-  for (let i = 0; i < result.rows.length; i++) {
-    rows.push(result.rows.item(i));
-  }
-
-  return rows;
-}
-
 export async function getAllMembers() {
   const result = await runSql(
-    SELECT * FROM members ORDER BY id ASC;
+    
+      SELECT *
+      FROM members
+      ORDER BY name COLLATE NOCASE ASC;
+    
   );
 
-  const rows = [];
-
-  for (let i = 0; i < result.rows.length; i++) {
-    rows.push(result.rows.item(i));
-  }
-
-  return rows;
+  return rowsToArray(result);
 }
 
-export async function bulkImportMembers(rows) {
-  let inserted = 0;
-  const failed = [];
-
-  for (const row of rows) {
-    try {
-      if (!row.memberId) {
-        throw new Error('Missing Member ID');
-      }
- await upsertMember(
-        row.memberId,
-        row.name || '',
-        row.phone || '',
-        row.address || ''
-      );
-
-      inserted++;
-    } catch (error) {
-      failed.push({
-        row,
-        error: error?.message || String(error),
-      });
-    }
-  }
-
-  return {
-    inserted,
-    failed,
-  };
-}
-
-// ============================================================
-// ISSUE / RETURN
-// ============================================================
-
-async function uploadIssueToCloud(issue) {
-  if (!issue?.id) return;
-
-  await safeCloudOperation(async () => {
-    await setDoc(
-      doc(firestoreDb, 'issues', String(issue.id)),
+async function uploadIssue(issue) {
+  return safeCloudOperation(() =>
+    setDoc(
+      doc(
+        firestoreDb,
+        'issues',
+        String(issue.id)
+      ),
       {
         id: issue.id,
-        member_id: String(issue.member_id),
+        member_id: issue.member_id,
         book_id: issue.book_id,
         issue_date: issue.issue_date,
         due_date: issue.due_date,
-        return_date: issue.return_date || null,
-        status: issue.status || 'issued',
-        updated_at: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-  });
+        return_date:
+          issue.return_date ?? null,
+        status:
+          issue.status ?? 'issued',
+      }
+    )
+  );
 }
 
 export async function issueBook({
   memberId,
   bookId,
 }) {
-  const member = await getMember(memberId);
+  const cleanMemberId = clean(
+    memberId
+  );
 
-  if (!member) {
-    throw new Error('Member not found. Please register the member first.');
+  if (!cleanMemberId) {
+    throw new Error(
+      'Member ID is required'
+    );
   }
 
-  const book = await findBookByBarcodeOrId(bookId);
+  const member = await getMember(
+    cleanMemberId
+  );
+
+  if (!member) {
+    throw new Error(
+      'Member not found. Add the member before issuing a book.'
+    );
+  }
+
+  const book =
+    await findBookByBarcodeOrId(bookId);
 
   if (!book) {
-    throw new Error('Book not found');
+    throw new Error(
+      'Book not found'
+    );
   }
 
   if (book.status === 'issued') {
-    throw new Error('This book is already issued');
+    throw new Error(
+      'This book is already issued'
+    );
   }
+ const issueDate = new Date();
+  const dueDate = new Date();
 
-  const issueDate = new Date();
-
-  const dueDate = new Date(issueDate);
-  dueDate.setDate(dueDate.getDate() + 15);
+  dueDate.setDate(
+    issueDate.getDate() + 15
+  );
 
   const issueDateStr =
-    issueDate.toISOString().split('T')[0];
+    issueDate
+      .toISOString()
+      .split('T')[0];
 
   const dueDateStr =
-    dueDate.toISOString().split('T')[0];
+    dueDate
+      .toISOString()
+      .split('T')[0];
 
   await runSql(
-    INSERT INTO issues
-    (member_id, book_id, issue_date, due_date, status)
-    VALUES (?, ?, ?, ?, 'issued');,
+    
+      INSERT INTO issues
+        (
+          member_id,
+          book_id,
+          issue_date,
+          due_date,
+          status
+        )
+      VALUES (?, ?, ?, ?, 'issued');
+    ,
     [
-      memberId,
+      cleanMemberId,
       book.book_id,
       issueDateStr,
       dueDateStr,
@@ -811,112 +884,150 @@ export async function issueBook({
   );
 
   await runSql(
-    UPDATE books
-     SET status = 'issued'
-     WHERE book_id = ?;,
+    
+      UPDATE books
+      SET status = 'issued'
+      WHERE book_id = ?;
+    ,
     [book.book_id]
   );
 
-  const issues = await runSql(
-    SELECT *
-     FROM issues
-     WHERE book_id = ?
-       AND status = 'issued'
-     ORDER BY id DESC
-     LIMIT 1;,
-    [book.book_id]
+  const issueResult = await runSql(
+    
+      SELECT *
+      FROM issues
+      WHERE member_id = ?
+        AND book_id = ?
+        AND status = 'issued'
+      ORDER BY id DESC
+      LIMIT 1;
+    ,
+    [
+      cleanMemberId,
+      book.book_id,
+    ]
   );
 
-  if (issues.rows.length > 0) {
-    await uploadIssueToCloud(
-      issues.rows.item(0)
+  const issue =
+    issueResult.rows.item(0);
+
+  const updatedBookResult =
+    await runSql(
+      
+        SELECT *
+        FROM books
+        WHERE book_id = ?;
+      ,
+      [book.book_id]
     );
-  }
 
-  const updatedBook =
-    await findBookByBarcodeOrId(book.book_id);
+  await uploadIssue(issue);
 
-  await uploadBookToCloud(updatedBook);
+  await uploadBook(
+    updatedBookResult.rows.item(0)
+  );
 
   return {
     issueDate: issueDateStr,
     dueDate: dueDateStr,
-    book: updatedBook,
+    book,
   };
 }
 
 export async function returnBook({
   bookId,
 }) {
-  const book = await findBookByBarcodeOrId(bookId);
+  const book =
+    await findBookByBarcodeOrId(bookId);
 
   if (!book) {
-    throw new Error('Book not found');
+    throw new Error(
+      'Book not found'
+    );
   }
 
-  const activeIssueResult = await runSql(
-    SELECT *
-     FROM issues
-     WHERE book_id = ?
-       AND status = 'issued'
-     ORDER BY id DESC
-     LIMIT 1;,
+  const activeIssue = await runSql(
+    
+      SELECT id
+      FROM issues
+      WHERE book_id = ?
+        AND status = 'issued'
+      LIMIT 1;
+    ,
     [book.book_id]
   );
 
-  if (activeIssueResult.rows.length === 0) {
-    throw new Error('This book is not currently issued');
+  if (activeIssue.rows.length === 0) {
+    throw new Error(
+      'This book is not currently issued.'
+    );
   }
 
-  const activeIssue =
-    activeIssueResult.rows.item(0);
-
   const returnDateStr =
-    new Date().toISOString().split('T')[0];
+    new Date()
+      .toISOString()
+      .split('T')[0];
 
   await runSql(
-    UPDATE issues
-     SET return_date = ?,
-         status = 'returned'
-     WHERE id = ?;,
+    
+      UPDATE issues
+      SET
+        return_date = ?,
+        status = 'returned'
+      WHERE book_id = ?
+        AND status = 'issued';
+    ,
     [
       returnDateStr,
-      activeIssue.id,
+      book.book_id,
     ]
   );
 
   await runSql(
-    UPDATE books
-     SET status = 'available'
-     WHERE book_id = ?;,
+    
+      UPDATE books
+      SET status = 'available'
+      WHERE book_id = ?;
+    ,
     [book.book_id]
   );
 
-  const returnedIssueResult =
-    await runSql(
+  const issueResult = await runSql(
+    
       SELECT *
-       FROM issues
-       WHERE id = ?;,
-      [activeIssue.id]
+      FROM issues
+      WHERE id = ?;
+    ,
+    [
+      activeIssue.rows.item(0).id,
+    ]
+  );
+
+  const updatedBookResult =
+    await runSql(
+      
+        SELECT *
+        FROM books
+        WHERE book_id = ?;
+      ,
+      [book.book_id]
     );
 
-  if (returnedIssueResult.rows.length > 0) {
-    await uploadIssueToCloud(
-      returnedIssueResult.rows.item(0)
-    );
-  }
+  await uploadIssue(
+    issueResult.rows.item(0)
+  );
 
-  const updatedBook =
-    await findBookByBarcodeOrId(book.book_id);
-
-  await uploadBookToCloud(updatedBook);
+  await uploadBook(
+    updatedBookResult.rows.item(0)
+  );
 
   return {
     returnDate: returnDateStr,
-    book: updatedBook,
+    book,
   };
 }
- export async function getActiveIssues() {
+
+export async function getActiveIssues() {
   const result = await runSql(
     SELECT
       issues.*,
@@ -929,30 +1040,19 @@ export async function returnBook({
     ORDER BY issues.due_date ASC;
   );
 
-  const rows = [];
-  [9/12/2026 9:27 AM] Vp: for (let i = 0; i < result.rows.length; i++) {
-    rows.push(result.rows.item(i));
-  }
-
-  return rows;
+  return rowsToArray(result);
 }
-
-// ============================================================
-// BACKUP
-// ============================================================
 
 export async function getAllIssuesFull() {
   const result = await runSql(
-    SELECT * FROM issues ORDER BY id ASC;
+    
+      SELECT *
+      FROM issues
+      ORDER BY id ASC;
+    
   );
 
-  const rows = [];
-
-  for (let i = 0; i < result.rows.length; i++) {
-    rows.push(result.rows.item(i));
-  }
-
-  return rows;
+  return rowsToArray(result);
 }
 
 export async function getBackupData() {
@@ -973,26 +1073,32 @@ export async function getBackupData() {
   };
 }
 
-// ============================================================
-// LOCAL RESTORE
-// ============================================================
-
 export function clearAllData() {
-  return new Promise((resolve, reject) => {
-    db.transaction(
-      (tx) => {
-        tx.executeSql(DELETE FROM issues;);
-        tx.executeSql(DELETE FROM books;);
-        tx.executeSql(DELETE FROM members;);
-      },
-      (error) => reject(error),
-      () => resolve(true)
-    );
-  });
+  return new Promise(
+    (resolve, reject) => {
+      db.transaction(
+        (tx) => {
+          tx.executeSql(
+            DELETE FROM issues;
+          );
+
+          tx.executeSql(
+            DELETE FROM books;
+          );
+
+          tx.executeSql(
+            DELETE FROM members;
+          );
+        },
+        (error) => reject(error),
+        () => resolve(true)
+      );
+    }
+  );
 }
 
 export async function restoreFullBackup({
-  books = [],
+  books =[],
   members = [],
   issues = [],
 }) {
@@ -1000,29 +1106,45 @@ export async function restoreFullBackup({
 
   for (const b of books) {
     await runSql(
-      INSERT INTO books
-      (
-        book_id,
-        category_code,
-        category_no,
-        category_label,
-        category_type,
-        book_name,
-        author_name,
-        publication_name,
-        cost,
-        barcode,
-        status,
-        created_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')));,
+      
+        INSERT INTO books
+        (
+          book_id,
+          category_code,
+          category_no,
+          category_label,
+          category_type,
+          book_name,
+          author_name,
+          publication_name,
+          cost,
+          barcode,
+          status,
+          created_at
+        )
+        VALUES
+        (
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          COALESCE(?, datetime('now'))
+        );
+      ,
       [
         b.book_id,
-        b.category_code || '',
+        b.category_code || 'OT',
         b.category_no || 0,
-        b.category_label || '',
+        b.category_label || null,
         b.category_type || null,
-        b.book_name || '',
+        b.book_name,
         b.author_name || null,
         b.publication_name || null,
         b.cost ?? null,
@@ -1035,15 +1157,24 @@ export async function restoreFullBackup({
 
   for (const m of members) {
     await runSql(
-      INSERT INTO members
-      (
-        member_id,
-        name,
-        phone,
-        address,
-        created_at
-      )
-      VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')));,
+      
+        INSERT INTO members
+        (
+          member_id,
+          name,
+          phone,
+          address,
+          created_at
+        )
+        VALUES
+        (
+          ?,
+          ?,
+          ?,
+          ?,
+          COALESCE(?, datetime('now'))
+        );
+      ,
       [
         m.member_id,
         m.name || null,
@@ -1056,17 +1187,21 @@ export async function restoreFullBackup({
 
   for (const i of issues) {
     await runSql(
-      INSERT INTO issues
-      (
-        member_id,
-        book_id,
-        issue_date,
-        due_date,
-        return_date,
-        status
-      )
-      VALUES (?, ?, ?, ?, ?, ?);,
+      
+        INSERT INTO issues
+        (
+          id,
+          member_id,
+          book_id,
+          issue_date,
+          due_date,
+          return_date,
+          status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+      ,
       [
+        i.id,
         i.member_id,
         i.book_id,
         i.issue_date,
@@ -1077,6 +1212,8 @@ export async function restoreFullBackup({
     );
   }
 
+  await syncLocalToCloud();
+
   return {
     books: books.length,
     members: members.length,
@@ -1084,33 +1221,150 @@ export async function restoreFullBackup({
   };
 }
 
-// ============================================================
-// FIRESTORE → LOCAL
-// ============================================================
+export async function syncLocalToCloud() {
+  if (!auth.currentUser) {
+    return {
+      uploaded: 0,
+    };
+  }
 
-export async function syncCloudToLocal() {
-  const result = {
-    books: 0,
-    members: 0,
-    issues: 0,
+  const [
+    books,
+    members,
+    issues,
+  ] = await Promise.all([
+    getAllBooks(),
+    getAllMembers(),
+    getAllIssuesFull(),
+  ]);
+
+  let batch = writeBatch(firestoreDb);
+  let operations = 0;
+  let uploaded = 0;
+
+  const commitIfNeeded = async () => {
+    if (operations === 0) {
+      return;
+    }
+
+    await batch.commit();
+
+    batch = writeBatch(firestoreDb);
+    operations = 0;
   };
 
-  // ---------------- BOOKS ----------------
-
-  await safeCloudOperation(async () => {
-    const snapshot = await getDocs(
-      collection(firestoreDb, 'books')
+  for (const book of books) {
+    batch.set(
+      doc(
+        firestoreDb,
+        'books',
+        String(book.book_id)
+      ),
+      bookCloudData(book)
     );
 
-    for (const document of snapshot.docs) {
-      const b = document.data();
+    operations += 1;
+    uploaded += 1;
 
-      if (!b.book_id || !b.book_name) {
-        continue;
+    if (operations >= 450) {
+      await commitIfNeeded();
+    }
+  }
+
+  for (const member of members) {
+    batch.set(
+      doc(
+        firestoreDb,
+        'members',
+        String(member.member_id)
+      ),
+      memberCloudData(member)
+    );
+
+    operations += 1;
+    uploaded += 1;
+
+    if (operations >= 450) {
+      await commitIfNeeded();
+    }
+  }
+
+  for (const issue of issues) {
+    batch.set(
+      doc(
+        firestoreDb,
+        'issues',
+        String(issue.id)
+      ),
+      {
+        id: issue.id,
+        member_id: issue.member_id,
+        book_id: issue.book_id,
+        issue_date: issue.issue_date,
+        due_date: issue.due_date,
+        return_date: issue.return_date ?? null,
+        status: issue.status ?? 'issued',
       }
+    );
 
-      await runSql(
-        `INSERT OR REPLACE INTO books
+    operations += 1;
+    uploaded += 1;
+
+    if (operations >= 450) {
+      await commitIfNeeded();
+    }
+  }
+
+  await commitIfNeeded();
+
+  return {
+    uploaded,
+  };
+}
+
+export async function syncCloudToLocal() {
+  if (!auth.currentUser) {
+    return {
+      downloaded: 0,
+    };
+  }
+ const [
+    bookSnapshot,
+    memberSnapshot,
+    issueSnapshot,
+  ] = await Promise.all([
+    getDocs(
+      collection(
+        firestoreDb,
+        'books'
+      )
+    ),
+    getDocs(
+      collection(
+        firestoreDb,
+        'members'
+      )
+    ),
+    getDocs(
+      collection(
+        firestoreDb,
+        'issues'
+      )
+    ),
+  ]);
+
+  let downloaded = 0;
+
+  for (const item of bookSnapshot.docs) {
+    const b = item.data();
+
+    if (!b.book_id) {
+      continue;
+    }
+
+    await runSql(
+      
+        INSERT OR REPLACE INTO books
         (
           book_id,
           category_code,
@@ -1119,48 +1373,42 @@ export async function syncCloudToLocal() {
           category_type,
           book_name,
           author_name,
-publication_name,
+          publication_name,
           cost,
           barcode,
           status,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);,
-        [
-          b.book_id,
-          b.category_code || '',
-          b.category_no || 0,
-          b.category_label || '',
-          b.category_type || '',
-          b.book_name || '',
-          b.author_name || '',
-          b.publication_name || '',
-          b.cost ?? null,
-          b.barcode || '',
-          b.status || 'available',
-          b.created_at || new Date().toISOString(),
-        ]
-      );
-
-      result.books++;
-    }
-  });
-
-  // ---------------- MEMBERS ----------------
-
-  await safeCloudOperation(async () => {
-    const snapshot = await getDocs(
-      collection(firestoreDb, 'members')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+      ,
+      [
+        Number(b.book_id),
+        b.category_code || 'OT',
+        Number(b.category_no || 0),
+        b.category_label || null,
+        b.category_type || null,
+        b.book_name || '',
+        b.author_name || null,
+        b.publication_name || null,
+        b.cost ?? null,
+        b.barcode || null,
+        b.status || 'available',
+        b.created_at || null,
+      ]
     );
 
-    for (const document of snapshot.docs) {
-      const m = document.data();
+    downloaded += 1;
+  }
 
-      if (!m.member_id) {
-        continue;
-      }
+  for (const item of memberSnapshot.docs) {
+    const m = item.data();
 
-      await runSql(
+    if (!m.member_id) {
+      continue;
+    }
+
+    await runSql(
+      
         INSERT OR REPLACE INTO members
         (
           member_id,
@@ -1169,35 +1417,29 @@ publication_name,
           address,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?);,
-        [
-          String(m.member_id),
-          m.name || '',
-          m.phone || '',
-          m.address || '',
-          m.created_at || new Date().toISOString(),
-        ]
-      );
-
-      result.members++;
-    }
-  });
-
-  // ---------------- ISSUES ----------------
-
-  await safeCloudOperation(async () => {
-    const snapshot = await getDocs(
-      collection(firestoreDb, 'issues')
+        VALUES (?, ?, ?, ?, ?);
+      ,
+      [
+        String(m.member_id),
+        m.name || '',
+        m.phone || '',
+        m.address || '',
+        m.created_at || null,
+      ]
     );
 
-    for (const document of snapshot.docs) {
-      const i = document.data();
+    downloaded += 1;
+  }
 
-      if (!i.id) {
-        continue;
-      }
+  for (const item of issueSnapshot.docs) {
+    const i = item.data();
 
-      await runSql(
+    if (i.id == null) {
+      continue;
+    }
+
+    await runSql(
+      
         INSERT OR REPLACE INTO issues
         (
           id,
@@ -1208,182 +1450,27 @@ publication_name,
           return_date,
           status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?);`,
-        [
-          i.id,
-          i.member_id,
-          i.book_id,
-          i.issue_date,
-          i.due_date,
-          i.return_date || null,
-          i.status || 'issued',
-        ]
-      );
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+      ,
+      [
+        Number(i.id),
+        String(i.member_id || ''),
+        Number(i.book_id),
+        i.issue_date || '',
+        i.due_date || '',
+        i.return_date || null,
+        i.status || 'issued',
+      ]
+    );
 
-      result.issues++;
-    }
-  });
+    downloaded += 1;
+  }
 
-  return result;
-}
-
-// ============================================================
-// LOCAL → FIRESTORE
-// ============================================================
-
-export async function syncLocalToCloud() {
-  const books = await getAllBooks();
-  const members = await getAllMembers();
-  const issues = await getAllIssuesFull();
-
-  const result = {
-    books: 0,
-    members: 0,
-    issues: 0,
+  return {
+    downloaded,
   };
-
-  await safeCloudOperation(async () => {
-
-    // ---------------- BOOKS ----------------
-
-    let batch = writeBatch(firestoreDb);
-    let count = 0;
-
-    for (const book of books) {
-      const ref = doc(
-        firestoreDb,
-        'books',
-        String(book.book_id)
-      );
-
-      batch.set(
-        ref,
-        {
-          book_id: book.book_id,
-          category_code: book.category_code || '',
-          category_no: book.category_no || 0,
-          category_label: book.category_label || '',
-          category_type: book.category_type || '',
-          book_name: book.book_name || '',
-          author_name: book.author_name || '',
-          publication_name: book.publication_name || '',
-          cost: book.cost ?? null,
-          barcode: book.barcode || '',
-          status: book.status || 'available',
-          created_at:
-            book.created_at ||
-            new Date().toISOString(),
-          updated_at:
-            new Date().toISOString(),
-        },
-        { merge: true }
-      );
-
-      count++;
-      result.books++;
-
-      if (count === 450) {
-        await batch.commit();
-        batch = writeBatch(firestoreDb);
-        count = 0;
-      }
-    }
-
-    if (count > 0) {
-      await batch.commit();
-    }
-
-    // ---------------- MEMBERS ----------------
-
-    batch = writeBatch(firestoreDb);
-    count = 0;
-
-    for (const member of members) {
-      const ref = doc(
-        firestoreDb,
-        'members',
-        String(member.member_id)
-      );
-batch.set(
-        ref,
-        {
-          member_id: String(member.member_id),
-          name: member.name || '',
-          phone: member.phone || '',
-          address: member.address || '',
-          created_at:
-            member.created_at ||
-            new Date().toISOString(),
-          updated_at:
-            new Date().toISOString(),
-        },
-        { merge: true }
-      );
-
-      count++;
-      result.members++;
-
-      if (count === 450) {
-        await batch.commit();
-        batch = writeBatch(firestoreDb);
-        count = 0;
-      }
-    }
-
-    if (count > 0) {
-      await batch.commit();
-    }
-
-    // ---------------- ISSUES ----------------
-
-    batch = writeBatch(firestoreDb);
-    count = 0;
-
-    for (const issue of issues) {
-      const ref = doc(
-        firestoreDb,
-        'issues',
-        String(issue.id)
-      );
-
-      batch.set(
-        ref,
-        {
-          id: issue.id,
-          member_id: String(issue.member_id),
-          book_id: issue.book_id,
-          issue_date: issue.issue_date,
-          due_date: issue.due_date,
-          return_date:
-            issue.return_date || null,
-          status:
-            issue.status || 'issued',
-          updated_at:
-            new Date().toISOString(),
-        },
-        { merge: true }
-      );
-
-      count++;
-      result.issues++;
-
-      if (count === 450) {
-        await batch.commit();
-        batch = writeBatch(firestoreDb);
-        count = 0;
-      }
-    }
-
-    if (count > 0) {
-      await batch.commit();
-    }
-  });
-
-  return result;
 }
-
-// ============================================================
-// DEFAULT EXPORT
-// ============================================================
 
 export default db;
+   
+ 
