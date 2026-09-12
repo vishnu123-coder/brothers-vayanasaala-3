@@ -1,13 +1,38 @@
- import React, { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { StatusBar } from 'expo-status-bar';
-import { onAuthStateChanged } from 'firebase/auth';
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  ActivityIndicator,
+  StyleSheet,
+} from 'react-native';
+
+import {
+  NavigationContainer,
+} from '@react-navigation/native';
+
+import {
+  createBottomTabNavigator,
+} from '@react-navigation/bottom-tabs';
+
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+} from 'react-native-safe-area-context';
+
+import {
+  Ionicons,
+} from '@expo/vector-icons';
+
+import {
+  StatusBar,
+} from 'expo-status-bar';
+
+import {
+  onAuthStateChanged,
+} from 'firebase/auth';
 
 import { auth } from './firebase';
+
 import {
   initDatabase,
   syncCloudToLocal,
@@ -18,11 +43,11 @@ import LoginScreen from './screens/LoginScreen';
 
 import DashboardScreen from './screens/DashboardScreen';
 import AddBookScreen from './screens/AddBookScreen';
+import MembersScreen from './screens/MembersScreen';
 import SearchScreen from './screens/SearchScreen';
 import StockViewScreen from './screens/StockViewScreen';
 import IssueReturnScreen from './screens/IssueReturnScreen';
 import BackupRestoreScreen from './screens/BackupRestoreScreen';
-import MembersScreen from './screens/MembersScreen';
 
 import { COLORS } from './utils/theme';
 
@@ -45,67 +70,79 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
 
-  // Initialize local database
   useEffect(() => {
     initDatabase()
       .then(() => {
         setDatabaseReady(true);
       })
       .catch((e) => {
-        setError(e?.message || 'Unable to open database.');
+        setError(
+          e?.message || 'Unable to open local database.'
+        );
       });
   }, []);
 
-  // Watch Firebase login state
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      setCheckingAuth(false);
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      async (currentUser) => {
+        setUser(currentUser);
+        setCheckingAuth(false);
 
-      if (!currentUser || !databaseReady) {
-        return;
+        if (!currentUser || !databaseReady) {
+          return;
+        }
+
+        try {
+          setSyncing(true);
+
+          await syncCloudToLocal();
+
+          await syncLocalToCloud();
+        } catch (e) {
+          console.log(
+            'Cloud synchronization warning:',
+            e
+          );
+        } finally {
+          setSyncing(false);
+        }
       }
-
-      // Synchronize cloud and local database
-      try {
-        setSyncing(true);
-
-        // Cloud data gets priority first.
-        // If the cloud is empty, local data remains untouched.
-        await syncCloudToLocal();
-
-        // Upload local data.
-        // This is useful for the first device that already has
-        // the library stored locally.
-        await syncLocalToCloud();
-      } catch (e) {
-        console.log('Cloud sync warning:', e);
-      } finally {
-        setSyncing(false);
-      }
-    });
+    );
 
     return unsubscribe;
   }, [databaseReady]);
 
-  // Database error
   if (error) {
     return (
       <SafeAreaProvider>
-        <SafeAreaView style={styles.center} edges={['top', 'bottom']}>
-          <Text style={styles.errorTitle}>Database Error</Text>
-          <Text style={styles.errorText}>{error}</Text>
+        <SafeAreaView
+          style={styles.center}
+          edges={['top', 'bottom']}
+        >
+          <Text style={styles.errorTitle}>
+            Database Error
+          </Text>
+
+          <Text style={styles.errorText}>
+            {error}
+          </Text>
         </SafeAreaView>
       </SafeAreaProvider>
     );
   }
 
-  // Initial loading
   if (!databaseReady || checkingAuth) {
     return (
       <SafeAreaProvider>
-        <SafeAreaView style={styles.center} edges={['top', 'bottom']}>
-          <ActivityIndicator size="large" color={COLORS.navy} />
+        <SafeAreaView
+          style={styles.center}
+          edges={['top', 'bottom']}
+        >
+          <ActivityIndicator
+            size="large"
+            color={COLORS.navy}
+          />
 
           <Text style={styles.loadingText}>
             Loading Brothers Vayanasala…
@@ -115,35 +152,44 @@ export default function App() {
     );
   }
 
-  // Not logged in
   if (!user) {
     return (
       <SafeAreaProvider>
-        <StatusBar style="dark" />
+        <StatusBar
+          style="dark"
+          backgroundColor="#F4F6F9"
+          translucent={false}
+        />
+
         <LoginScreen />
       </SafeAreaProvider>
     );
   }
 
-  // Logged in + synchronizing
   if (syncing) {
     return (
       <SafeAreaProvider>
-        <SafeAreaView style={styles.center} edges={['top', 'bottom']}>
-          <ActivityIndicator size="large" color={COLORS.navy} />
+        <SafeAreaView
+          style={styles.center}
+          edges={['top', 'bottom']}
+        >
+          <ActivityIndicator
+            size="large"
+            color={COLORS.navy}
+          />
 
           <Text style={styles.syncTitle}>
             Syncing library…
           </Text>
 
           <Text style={styles.syncText}>
-            Connecting Brothers Vayanasala to the cloud
+            Connecting to the Brothers Vayanasala cloud database
           </Text>
         </SafeAreaView>
       </SafeAreaProvider>
     );
   }
- return (
+return (
     <SafeAreaProvider>
       <NavigationContainer>
         <StatusBar
@@ -157,6 +203,7 @@ export default function App() {
             headerShown: false,
 
             tabBarActiveTintColor: COLORS.navy,
+
             tabBarInactiveTintColor: '#9CA3AF',
 
             tabBarLabelStyle: {
@@ -179,7 +226,10 @@ export default function App() {
               minWidth: 48,
             },
 
-            tabBarIcon: ({ color, size }) => (
+            tabBarIcon: ({
+              color,
+              size,
+            }) => (
               <Ionicons
                 name={ICONS[route.name]}
                 size={Math.min(size, 22)}
@@ -191,43 +241,57 @@ export default function App() {
           <Tab.Screen
             name="Dashboard"
             component={DashboardScreen}
-            options={{ tabBarLabel: 'Home' }}
+            options={{
+              tabBarLabel: 'Home',
+            }}
           />
 
           <Tab.Screen
             name="Add Book"
             component={AddBookScreen}
-            options={{ tabBarLabel: 'Add' }}
+            options={{
+              tabBarLabel: 'Add',
+            }}
           />
 
           <Tab.Screen
             name="Members"
             component={MembersScreen}
-            options={{ tabBarLabel: 'Members' }}
+            options={{
+              tabBarLabel: 'Members',
+            }}
           />
 
           <Tab.Screen
             name="Search"
             component={SearchScreen}
-            options={{ tabBarLabel: 'Search' }}
+            options={{
+              tabBarLabel: 'Search',
+            }}
           />
 
           <Tab.Screen
             name="Stock"
             component={StockViewScreen}
-            options={{ tabBarLabel: 'Stock' }}
+            options={{
+              tabBarLabel: 'Stock',
+            }}
           />
 
           <Tab.Screen
             name="Issue/Return"
             component={IssueReturnScreen}
-            options={{ tabBarLabel: 'Issue' }}
+            options={{
+              tabBarLabel: 'Issue',
+            }}
           />
 
           <Tab.Screen
             name="Backup"
             component={BackupRestoreScreen}
-            options={{ tabBarLabel: 'Backup' }}
+            options={{
+              tabBarLabel: 'Backup',
+            }}
           />
         </Tab.Navigator>
       </NavigationContainer>
@@ -253,8 +317,8 @@ const styles = StyleSheet.create({
 
   errorText: {
     color: '#B91C1C',
-    paddingHorizontal: 20,
     textAlign: 'center',
+    paddingHorizontal: 20,
   },
 
   loadingText: {
@@ -274,5 +338,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     color: COLORS.textMuted,
     textAlign: 'center',
+    lineHeight: 20,
   },
 });
