@@ -7,12 +7,14 @@
       "android": {
         "buildType": "apk"
       },
+      "channel": "preview",
       "distribution": "internal"
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
-      }
+      },
+      "channel": "production"
     }
   },
   "submit": {
