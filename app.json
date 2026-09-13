@@ -2,7 +2,7 @@
   "expo": {
     "name": "Brothers Vayanasala",
     "slug": "brothers-vayanasala",
-    "owner": "vishnucoders-team",
+    "owner": "codervishnus-team",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -40,7 +40,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "a0e41254-f128-4673-b31b-09be2caa00e7"
+        "projectId": "b1595455-ba0f-44d5-baf7-0fe33057d931"
       }
     }
   }
