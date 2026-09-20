@@ -8,5 +8,5 @@ jobs:
   publish_update:
     type: update
     params:
-      branch: preview
+      channel: preview
       message: 'Update published automatically from GitHub push'
