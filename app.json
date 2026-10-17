@@ -2,6 +2,7 @@
   "expo": {
     "name": "Brothers Vayanasala",
     "slug": "brothers-vayanasala",
+    "owner": "codervishnus-team",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
