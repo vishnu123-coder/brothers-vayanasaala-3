@@ -1,0 +1,15 @@
+// Paste into Firebase Console -> Firestore Database -> Rules -> Publish.
+//
+// The app has no user login, so these rules allow anyone who has the app
+// to read/write the library data. That is fine for a private community
+// library, but do NOT leave the default "test mode" rules in place:
+// they expire after 30 days and the app then stops working.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /books/{doc}   { allow read, write: if true; }
+    match /members/{doc} { allow read, write: if true; }
+    match /issues/{doc}  { allow read, write: if true; }
+    match /meta/{doc}    { allow read, write: if true; }
+  }
+}
